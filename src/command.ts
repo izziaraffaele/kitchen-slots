@@ -23,7 +23,7 @@ export const handler = function (argv: Arguments) {
   const input = Input.parseSource(argv.source);
 
   if (!input?.merchant) {
-    throw new Error('Invalid input');
+    throw new Error('INVALID_INPUT');
   }
 
   const merchant = Merchant.create(

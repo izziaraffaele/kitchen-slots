@@ -6,18 +6,19 @@ import * as Inventory from './inventory';
 import * as Queue from './queue';
 
 export const processOrders = (
-  inventory: IIngredients,
+  inventory: Inventory.Inventory,
   queue: Queue.Queue,
   orders: IOrder[]
 ) => {
   return sortBy(orders, 'date').map((order) => {
     const ingredients = Order.getIngredients(order);
 
-    if (!Inventory.hasIngredients(inventory, ingredients)) {
+    if (!inventory.has(ingredients)) {
       return Order.reject(order);
     }
 
-    Inventory.popIngredients(inventory, ingredients);
+    inventory.pop(ingredients);
+
     const processingTime = queue.estimate(order);
 
     if (processingTime > 20) {
@@ -33,11 +34,12 @@ export const create = (
   inventory: IIngredients,
   workstations: IWorkstation[]
 ) => {
+  const stock = Inventory.create(inventory);
   const queue = Queue.create({ workstations });
 
   return {
-    process: (orders: IOrder[]) => processOrders(inventory, queue, orders),
-    getInventory: () => inventory,
+    process: (orders: IOrder[]) => processOrders(stock, queue, orders),
+    getInventory: () => stock.getState(),
     getTotalProcessingTime: () => queue.getTotalProcessingTime(),
   };
 };

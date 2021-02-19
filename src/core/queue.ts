@@ -1,8 +1,9 @@
 import moment from 'moment';
 import chunk from 'lodash/chunk';
 import { IWorkstation, IOrder } from './interfaces';
+import { assign } from 'lodash';
 
-type QueueState = Map<Date, number>;
+type QueueState = Map<number, number>;
 
 type IActiveWorkstation = IWorkstation & { queue: QueueState };
 
@@ -27,15 +28,16 @@ export const getWorkstationProcessingTime = (
   const startDate = moment(referenceDate).startOf('minute');
   let endDate = startDate.clone();
 
+  // the workstation can't process an order till the capacity is full
+  // so we need to fetch the last slot and see if there is any empty space to
+  // process at least part of this order
   const [lastSlotDate, lastSlotItems] = getLastSlot(workstation.queue);
 
   if (lastSlotDate && startDate.isSameOrBefore(lastSlotDate, 'minute')) {
-    endDate = moment(lastSlotDate);
+    endDate = moment(lastSlotDate).add(workstation.time, 'minute');
 
     if (lastSlotItems && lastSlotItems < workstation.capacity) {
       items -= workstation.capacity - lastSlotItems;
-    } else {
-      endDate.add(workstation.time, 'minute');
     }
   }
 
@@ -76,7 +78,10 @@ export const getTotalProcessingTime = (workstations: IActiveWorkstation[]) => {
     );
 
     if (firstSlotDate && lastSlotDate) {
-      return moment(lastSlotDate).diff(firstSlotDate, 'minutes');
+      return moment
+        .unix(lastSlotDate)
+        .add(workstations[workstations.length - 1].time, 'minute')
+        .diff(moment.unix(firstSlotDate), 'minute');
     }
   }
 
@@ -87,54 +92,51 @@ export const scheduleOrder = (
   workstations: IActiveWorkstation[],
   order: IOrder
 ) => {
-  let referenceDate = moment(order.date);
+  let referenceDate = moment(order.date).startOf('minute');
 
   return workstations.reduce((carry, workstation) => {
-    let assignableItems = order.items.length;
-    let startDate = referenceDate.clone().startOf('minute');
-    const [lastSlotDate, lastSlotItems] = getLastSlot(workstation.queue);
-
-    if (
-      lastSlotDate &&
-      lastSlotItems &&
-      referenceDate.isSameOrBefore(lastSlotDate, 'minute') &&
-      workstation.capacity > lastSlotItems
-    ) {
-      startDate = moment(lastSlotDate);
-      const lastSlotAssignableItems = workstation.capacity - lastSlotItems;
-
-      if (lastSlotAssignableItems > assignableItems) {
-        workstation.queue.set(lastSlotDate, lastSlotItems + assignableItems);
-      } else {
-        workstation.queue.set(lastSlotDate, workstation.capacity);
-      }
-
-      assignableItems -= lastSlotAssignableItems;
-    }
-
-    if (assignableItems > 0) {
-      chunk(new Array(assignableItems), workstation.capacity).forEach(
-        (chunkItems, index) => {
-          workstation.queue.set(
-            startDate
-              .clone()
-              .add(index * workstation.time, 'minute')
-              .toDate(),
-            chunkItems.length
-          );
-        }
-      );
-    }
-
     const partial = getWorkstationProcessingTime(
       workstation,
       order,
       referenceDate.toDate()
     );
 
-    referenceDate.add(partial, 'minute');
+    let assignableItems = order.items.length;
+    let startDate = referenceDate.clone();
 
-    return partial;
+    const [lastSlotDate, lastSlotItems] = getLastSlot(workstation.queue);
+
+    if (
+      lastSlotDate &&
+      referenceDate.isSameOrBefore(moment.unix(lastSlotDate), 'minute')
+    ) {
+      startDate = moment.unix(lastSlotDate).add(workstation.time, 'minute');
+
+      if (lastSlotItems && workstation.capacity > lastSlotItems) {
+        const lastSlotAssignableItems = workstation.capacity - lastSlotItems;
+
+        if (lastSlotAssignableItems > assignableItems) {
+          workstation.queue.set(lastSlotDate, lastSlotItems + assignableItems);
+        } else {
+          workstation.queue.set(lastSlotDate, workstation.capacity);
+        }
+
+        assignableItems -= lastSlotAssignableItems;
+      }
+    }
+
+    if (assignableItems > 0) {
+      chunk(new Array(assignableItems), workstation.capacity).forEach(
+        (chunkItems, index) => {
+          workstation.queue.set(startDate.unix(), chunkItems.length);
+          startDate.add(workstation.time, 'minute');
+        }
+      );
+    }
+
+    // console.log(workstation.id, order.id, workstation.queue);
+    referenceDate.add(partial, 'minute');
+    return carry + partial;
   }, 0);
 };
 
